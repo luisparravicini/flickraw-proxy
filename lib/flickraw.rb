@@ -145,7 +145,7 @@ module FlickRaw
     # Raises FailedResponse if the response status is _failed_.
     def call(req, args={})
       path = REST_PATH + build_args(args, req).collect { |a, v| "#{a}=#{v}" }.join('&')
-      http_response = Net::HTTP.start(FLICKR_HOST) { |http| http.get(path, 'User-Agent' => "Flickraw/#{VERSION}") }
+      http_response = connection { |http| http.get(path, 'User-Agent' => "Flickraw/#{VERSION}") }
       parse_response(http_response, req)
     end
 
@@ -175,7 +175,7 @@ module FlickRaw
         "\r\n" <<
         "--#{boundary}--"
 
-      http_response = Net::HTTP.start(FLICKR_HOST) { |http| http.post(UPLOAD_PATH, query, header) }
+      http_response = connection { |http| http.post(UPLOAD_PATH, query, header) }
       xml = http_response.body
       if xml[/stat="(\w+)"/, 1] == 'fail'
         msg = xml[/msg="([^"]+)"/, 1]
@@ -186,6 +186,21 @@ module FlickRaw
     end
 
     private
+    def connection
+      proxy = ENV['http_proxy'] || ENV['HTTP_PROXY']
+      requester = if proxy
+        uri = URI.parse(proxy)
+        proxy_user, proxy_pass = uri.userinfo.split(/:/) if uri.userinfo
+        proxy_host = uri.host
+        proxy_port = uri.port
+        Net::HTTP::Proxy(proxy_host, proxy_port,
+                         proxy_user, proxy_pass)
+      else
+        Net::HTTP
+      end
+      requester.start(FLICKR_HOST) { |http| yield http }
+    end
+
     def parse_response(response, req = nil)
       json = JSON.load(response.body)
       raise FailedResponse.new(json['message'], json['code'], req) if json.delete('stat') == 'fail'
